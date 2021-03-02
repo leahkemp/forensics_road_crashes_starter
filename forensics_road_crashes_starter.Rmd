@@ -1,0 +1,239 @@
+---
+title: "Forensics road crashes starter"
+author: "Leah Kemp"
+date: "3/2/2021"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, error = FALSE, message = FALSE)
+```
+
+# Introduction
+
+This is an example for how to get started with analysing a road crash dataset (on a dummy/fake dataset). I'll be using predominantly [dplyr](https://dplyr.tidyverse.org/) since it's an intuitive package for carrying out data manipulations that I really like to use!
+
+*Note: I reduced the size of the dataset for speed*
+
+# Load libraries
+
+```{r}
+library(xlsx)
+library(dplyr)
+```
+
+# Load data
+
+```{r, error=TRUE}
+# Reads sheet 1 of the spreadsheet
+data <- read.xlsx("/home/lkemp/forensics_road_crashes_starter/dummy.xlsx", 1, colNames = TRUE, rowNames = TRUE)
+```
+
+Throws an error because of lack of java memory, probably because it a large file?
+
+Solution found on [stack overflow](https://stackoverflow.com/questions/21937640/handling-java-lang-outofmemoryerror-when-writing-to-excel-from-r)
+
+```{r, error=TRUE}
+options(java.parameters = "-Xmx1000m")
+data <- read.xlsx("/home/lkemp/forensics_road_crashes_starter/dummy.xlsx", 1, colNames = TRUE, rowNames = TRUE)
+```
+
+Still getting an error...found another solution on [stack overflow](https://stackoverflow.com/questions/19147884/importing-a-big-xlsx-file-into-r) using an additional library to load the data
+
+```{r}
+library(openxlsx)
+data <- read.xlsx("/home/lkemp/forensics_road_crashes_starter/dummy.xlsx", 1, colNames = TRUE, rowNames = TRUE)
+```
+
+Great that loaded the data!
+
+However, the `Date.of.crash` column isn't formatted quite right:
+
+```{r}
+head(data)
+```
+
+We might be able to deal with this when loading the data using the `detectDates = TRUE` argument
+
+```{r}
+data <- read.xlsx("/home/lkemp/forensics_road_crashes_starter/dummy.xlsx", 1, colNames = TRUE, rowNames = TRUE, detectDates = TRUE)
+```
+
+See if it worked:
+
+```{r}
+head(data)
+```
+
+Looks like it did!
+
+*Note. you might need to convert the "x" cell values to "NA" for handeling them in R*
+
+# Data cleaning
+
+Convert cells with `x` to `NA` for better handling in R
+
+```{r}
+data <- data %>%
+  mutate(across(where(is.character), ~na_if(., "x")))
+```
+
+Check it worked ok
+
+```{r}
+data %>%
+  head()
+```
+
+Looks good!
+
+Re-name the column names with `#` in them (R reads this as a comments and won't evaluate the code)
+
+```{r}
+data <- data %>%
+  rename(no.deceased = "#.deceased")
+
+data <- data %>%
+  rename(no.vehicles.involved = "#.vehicles.involved")
+```
+
+Now I want to change some of the variables
+
+```{r}
+data$speed <- as.numeric(data$speed)
+data$no.deceased <- as.numeric(data$no.deceased)
+data$year <- as.character(data$year)
+```
+
+# Summarise the data
+
+## Total number of drivers
+
+Get the number of rows in the dataframe, and therefore the total number of drivers (assuming each row represents a distinct driver)
+
+```{r}
+data %>%
+  count()
+```
+
+99 individuals were involved in road crashes (note. I reduced the dataset so this is less)
+
+## Number of drivers over a certain age
+
+This time we do the same thing (counting the number of rows) but after we have "filtered" (removed the rows) for which `Age` is greater than 60
+
+```{r}
+data %>%
+  filter(Age > 60) %>%
+  count()
+```
+
+20 of these 99 people involved in road crashes were over 60 years old 
+
+Another thing of interest, "cutting" up a variable (in this case "Age") into portions and summarising over it
+
+```{r}
+data %>%
+  group_by(Age.range = cut(Age, breaks= seq(0, 120, by = 10))) %>%
+  summarise(num_individuals = n()) %>%
+  arrange(as.numeric(Age.range))
+```
+
+Try the same but looking at a different variable (Blood.alcohol) and different age ranges
+
+```{r}
+data %>%
+  group_by(Age.range = cut(Age, breaks= seq(0, 120, by = 20))) %>%
+  summarise(mean_blood_alcohol = mean(Blood.alcohol)) %>%
+  arrange(as.numeric(Age.range))
+```
+
+## Mean and standard deviations
+
+```{r}
+data %>%
+  # Choose which variables to look at (you can use more or less variables)
+  group_by(District, Gender) %>%
+  # Choose the variable to summarise (in this case I used "Age")
+  summarise(mean_age = mean(Age), sd_age = sd(Age))
+```
+
+```{r}
+data %>%
+  # Try looking at only "Day.of.Week" 
+  group_by(Day.of.Week) %>%
+  # Try looking at a different variable (in this case I used "speed")
+  summarise(mean_Blood.alcohol = mean(Blood.alcohol), sd_Blood.alcohol = sd(Blood.alcohol))
+```
+
+These results can be written to file:
+
+```{r}
+data %>%
+  group_by(District) %>%
+  summarise(mean_speed = mean(speed), sd_speed = sd(speed)) %>%
+  write.csv("speed_by_district.csv", row.names = FALSE)
+```
+
+## Max and min
+
+```{r}
+data %>%
+  group_by(District, Gender) %>%
+  summarise(min_blood_alcohol = min(Blood.alcohol), max_blood_alcohol = max(Blood.alcohol))
+```
+
+## Number of deceased drivers with alcohol in their blood
+
+Create a new column/variable that is "yes" or "no" to presence of alcohol in blood based on the `Blood.alcohol` column
+
+```{r}
+data <- data %>%
+  mutate(alcohol_in_system = case_when(
+    Blood.alcohol > 0 ~ "yes",
+    Blood.alcohol == 0 ~ "no"))
+```
+
+Get the number of rows in the dataframe, and therefore the total number of drivers (assuming each row represents a distinct driver) after we have "filtered" (removed the rows) for which `alcohol_in_system` is yes
+
+```{r}
+data %>%
+  filter(alcohol_in_system == "yes") %>%
+  count()
+```
+
+An alternative way of doing this, filter for rows/cases where at least one person was deceased and get the number of rows/cases where there was/wasn't any alcohol in their system
+
+```{r}
+data %>%
+  filter(no.deceased > 0) %>%
+  group_by(alcohol_in_system) %>%
+  summarise(count = n())
+```
+
+# Useful links
+
+- [A good starter with dplyr](https://dplyr.tidyverse.org/)
+- [Compute summary statistics in R](https://www.datanovia.com/en/lessons/compute-summary-statistics-in-r/)
+- [Aggregating and analyzing data with dplyr](https://datacarpentry.org/R-genomics/04-dplyr.html)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
